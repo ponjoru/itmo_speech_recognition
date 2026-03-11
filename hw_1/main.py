@@ -21,7 +21,7 @@ from torch.utils.data import DataLoader
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from prettytable import PrettyTable
 
-from melbanks import LogMelFilterBanks         # python hw_1/main.py
+from melbanks import LogMelFilterBanks
 from yes_no_dataset import YesNoDataset, collate_fn
 from cnn import CNN
     
@@ -256,9 +256,6 @@ def train(config: dict):
         enable_model_summary=False,
     )
     
-    print(model.encoder)
-    print(model.classifier)
-    exit(2)
     start = time.time()
     trainer.fit(model, datamodule=datamodule)
     end = time.time()
@@ -404,5 +401,5 @@ def task4():
 
 
 if __name__ == '__main__':
-    # task3()
+    task3()
     task4()
