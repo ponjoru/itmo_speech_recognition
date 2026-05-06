@@ -1,0 +1,7 @@
+torch>=2.0
+torchaudio>=2.0
+num2words>=2.0
+jiwer>=3.0
+prettytable>=3.0
+# kenlm (LM decoding, not needed for training):
+#   pip install https://github.com/kpu/kenlm/archive/master.zip
