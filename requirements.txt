@@ -1,6 +1,6 @@
 torch>=2.0
 torchaudio>=2.0
-num2words>=2.0
+num2words>=0.5.2
 jiwer>=3.0
 prettytable>=3.0
 # kenlm (LM decoding, not needed for training):
