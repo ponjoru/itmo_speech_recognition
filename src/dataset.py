@@ -129,9 +129,11 @@ class AudioDataset(Dataset):
             spec = self.time_mask(self.time_mask(self.time_mask(spec)))
             log_mel = spec.squeeze(0).T  # (T, 80)
 
-        # Normalize label: "139473" → "сто тридцать девять тысяч четыреста семьдесят три"
-        russian_text = normalize_label(row["transcription"])
-        label_ids = torch.tensor(encode(russian_text), dtype=torch.long)
+        # Labels are absent in the test split
+        if "transcription" in row:
+            label_ids = torch.tensor(encode(normalize_label(row["transcription"])), dtype=torch.long)
+        else:
+            label_ids = torch.zeros(0, dtype=torch.long)
 
         return log_mel, label_ids
 
@@ -220,8 +222,9 @@ def collate_fn(
     for i, f in enumerate(features):
         feat_pad[i, : f.shape[0]] = f
 
-    label_pad = torch.zeros(B, L_max, dtype=torch.long)
+    label_pad = torch.zeros(B, max(L_max, 1), dtype=torch.long)
     for i, l in enumerate(labels):
-        label_pad[i, : l.shape[0]] = l
+        if l.shape[0] > 0:
+            label_pad[i, : l.shape[0]] = l
 
     return feat_pad, feat_lengths, label_pad, label_lengths
