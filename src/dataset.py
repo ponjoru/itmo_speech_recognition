@@ -95,9 +95,9 @@ class AudioDataset(Dataset):
             for row in csv.DictReader(f):
                 self.samples.append(row)
 
-        # SpecAugment transforms (applied to features)
-        self.freq_mask = T.FrequencyMasking(freq_mask_param=20)
-        self.time_mask = T.TimeMasking(time_mask_param=50, iid_masks=True)
+        # SpecAugment transforms — aggressive enough to prevent speaker overfitting
+        self.freq_mask = T.FrequencyMasking(freq_mask_param=27)
+        self.time_mask = T.TimeMasking(time_mask_param=70, iid_masks=True)
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -113,7 +113,10 @@ class AudioDataset(Dataset):
             waveform, sr = self._speed_perturb(waveform, sr)
             if self.noise_files and random.random() < 0.5:
                 waveform = self._add_noise(waveform, sr)
-            if random.random() < 0.2:
+            elif random.random() < 0.4:
+                # Gaussian noise fallback when no noise files are provided
+                waveform = self._add_gaussian_noise(waveform)
+            if random.random() < 0.35:
                 waveform = self._packet_loss(waveform, sr)
 
         log_mel = audio_to_logmel(waveform, sr)  # (T, 80)
@@ -121,12 +124,9 @@ class AudioDataset(Dataset):
         # --- Feature-level augmentations (SpecAugment) ---
         if self.augment:
             spec = log_mel.T.unsqueeze(0)  # (1, 80, T) for transforms
-            if random.random() < 0.8:
-                spec = self.freq_mask(spec)
-                spec = self.freq_mask(spec)
-            if random.random() < 0.8:
-                spec = self.time_mask(spec)
-                spec = self.time_mask(spec)
+            # Always apply: 2 freq masks + 3 time masks
+            spec = self.freq_mask(self.freq_mask(spec))
+            spec = self.time_mask(self.time_mask(self.time_mask(spec)))
             log_mel = spec.squeeze(0).T  # (T, 80)
 
         # Normalize label: "139473" → "сто тридцать девять тысяч четыреста семьдесят три"
@@ -172,6 +172,14 @@ class AudioDataset(Dataset):
         noise_power = noise.norm()
         if noise_power > 0:
             noise = noise * (sig_power / (noise_power * snr))
+        return waveform + noise
+
+    def _add_gaussian_noise(self, waveform: Tensor) -> Tensor:
+        snr_db = random.uniform(5, 30)
+        snr = 10 ** (snr_db / 20)
+        sig_power = waveform.norm()
+        noise = torch.randn_like(waveform)
+        noise = noise * (sig_power / (noise.norm() * snr + 1e-9))
         return waveform + noise
 
     def _packet_loss(self, waveform: Tensor, sr: int) -> Tensor:

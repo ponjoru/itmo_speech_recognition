@@ -136,7 +136,7 @@ def train(args: argparse.Namespace) -> None:
     with open(output_dir / "config.json", "w") as f:
         json.dump(config, f, indent=2)
 
-    ctc_loss = nn.CTCLoss(blank=BLANK_IDX, reduction="mean", zero_infinity=True)
+    ctc_loss_fn = nn.CTCLoss(blank=BLANK_IDX, reduction="mean", zero_infinity=True)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-2)
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer, max_lr=args.lr,
@@ -144,62 +144,81 @@ def train(args: argparse.Namespace) -> None:
         pct_start=0.1, anneal_strategy="cos",
     )
 
+    # Determine per-speaker columns from dev metadata (fixed order for the whole run)
+    spk_ids = sorted({r["spk_id"] for r in dev_meta})
+    metrics_path = output_dir / "metrics.csv"
+    metrics_columns = ["epoch", "loss", "lr", "dev_cer", "time_s"] + spk_ids
+    metrics_file = open(metrics_path, "w", newline="")
+    metrics_writer = csv.DictWriter(metrics_file, fieldnames=metrics_columns)
+    metrics_writer.writeheader()
+    metrics_file.flush()
+
     best_cer = float("inf")
     patience_counter = 0
-    history = []
 
-    for epoch in range(1, args.epochs + 1):
-        model.train()
-        t0 = time.time()
-        total_loss = 0.0
+    try:
+        for epoch in range(1, args.epochs + 1):
+            model.train()
+            t0 = time.time()
+            total_loss = 0.0
 
-        for features, feat_lengths, labels, label_lengths in train_loader:
-            features = features.to(device)
-            feat_lengths = feat_lengths.to(device)
-            labels = labels.to(device)
-            label_lengths = label_lengths.to(device)
+            for features, feat_lengths, labels, label_lengths in train_loader:
+                features = features.to(device)
+                feat_lengths = feat_lengths.to(device)
+                labels = labels.to(device)
+                label_lengths = label_lengths.to(device)
 
-            optimizer.zero_grad()
-            log_probs, out_lengths = model(features, feat_lengths)
-            loss = ctc_loss(log_probs, labels, out_lengths, label_lengths)
-            loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
-            optimizer.step()
-            scheduler.step()
-            total_loss += loss.item()
+                optimizer.zero_grad()
+                log_probs, out_lengths = model(features, feat_lengths)
+                loss = ctc_loss_fn(log_probs, labels, out_lengths, label_lengths)
+                if args.label_smoothing > 0:
+                    smooth = -(log_probs.mean())
+                    loss = (1 - args.label_smoothing) * loss + args.label_smoothing * smooth
+                loss.backward()
+                nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+                optimizer.step()
+                scheduler.step()
+                total_loss += loss.item()
 
-        avg_loss = total_loss / len(train_loader)
-        elapsed = time.time() - t0
+            avg_loss = total_loss / len(train_loader)
+            elapsed = time.time() - t0
+            lr = scheduler.get_last_lr()[0]
 
-        if epoch % args.eval_every == 0 or epoch == args.epochs:
-            mean_cer, per_spk = evaluate(model, dev_loader, device, dev_meta)
-            spk_str = "  ".join(f"{k}={v:.3f}" for k, v in sorted(per_spk.items()))
-            print(
-                f"Epoch {epoch:3d}/{args.epochs}  loss={avg_loss:.4f}  "
-                f"dev_CER={mean_cer:.4f}  lr={scheduler.get_last_lr()[0]:.2e}  "
-                f"time={elapsed:.0f}s\n  [{spk_str}]"
-            )
-            history.append({"epoch": epoch, "loss": avg_loss, "dev_cer": mean_cer})
+            if epoch % args.eval_every == 0 or epoch == args.epochs:
+                mean_cer, per_spk = evaluate(model, dev_loader, device, dev_meta)
+                spk_str = "  ".join(f"{k}={v:.3f}" for k, v in sorted(per_spk.items()))
+                print(
+                    f"Epoch {epoch:3d}/{args.epochs}  loss={avg_loss:.4f}  "
+                    f"dev_CER={mean_cer:.4f}  lr={lr:.2e}  "
+                    f"time={elapsed:.0f}s\n  [{spk_str}]"
+                )
 
-            if mean_cer < best_cer:
-                best_cer = mean_cer
-                patience_counter = 0
-                torch.save(model.state_dict(), output_dir / "best_model.pt")
-                print(f"  → Saved best model (CER={best_cer:.4f})")
+                row = {"epoch": epoch, "loss": f"{avg_loss:.6f}", "lr": f"{lr:.2e}",
+                       "dev_cer": f"{mean_cer:.6f}", "time_s": f"{elapsed:.0f}"}
+                row.update({spk: f"{per_spk.get(spk, 0):.6f}" for spk in spk_ids})
+                metrics_writer.writerow(row)
+                metrics_file.flush()
+
+                if mean_cer < best_cer:
+                    best_cer = mean_cer
+                    patience_counter = 0
+                    torch.save(model.state_dict(), output_dir / "best_model.pt")
+                    print(f"  → Saved best model (CER={best_cer:.4f})")
+                else:
+                    patience_counter += 1
+                    if patience_counter >= args.patience:
+                        print(f"Early stopping at epoch {epoch}")
+                        break
             else:
-                patience_counter += 1
-                if patience_counter >= args.patience:
-                    print(f"Early stopping at epoch {epoch}")
-                    break
-        else:
-            print(f"Epoch {epoch:3d}/{args.epochs}  loss={avg_loss:.4f}  time={elapsed:.0f}s")
+                print(f"Epoch {epoch:3d}/{args.epochs}  loss={avg_loss:.4f}  time={elapsed:.0f}s")
 
-        if epoch % 10 == 0:
-            torch.save(model.state_dict(), output_dir / f"checkpoint_epoch{epoch:03d}.pt")
+            if epoch % 10 == 0:
+                torch.save(model.state_dict(), output_dir / f"checkpoint_epoch{epoch:03d}.pt")
+    finally:
+        metrics_file.close()
 
-    with open(output_dir / "history.json", "w") as f:
-        json.dump(history, f, indent=2)
     print(f"\nDone. Best dev CER: {best_cer:.4f}  →  {output_dir / 'best_model.pt'}")
+    print(f"Metrics log       →  {metrics_path}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -209,7 +228,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--noise_dir", default=None)
     p.add_argument("--epochs", type=int, default=150)
     p.add_argument("--batch_size", type=int, default=32)
-    p.add_argument("--lr", type=float, default=3e-3)
+    p.add_argument("--lr", type=float, default=2e-3)
     p.add_argument("--patience", type=int, default=20)
     p.add_argument("--eval_every", type=int, default=5)
     p.add_argument("--num_workers", type=int, default=4)
@@ -218,7 +237,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--n_heads", type=int, default=4)
     p.add_argument("--ff_dim", type=int, default=576)
     p.add_argument("--conv_kernel", type=int, default=31)
-    p.add_argument("--dropout", type=float, default=0.1)
+    p.add_argument("--dropout", type=float, default=0.2)
+    p.add_argument("--label_smoothing", type=float, default=0.1)
     return p.parse_args()
 
 
