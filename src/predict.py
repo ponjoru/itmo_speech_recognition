@@ -103,8 +103,11 @@ def predict(args: argparse.Namespace) -> None:
     print(f"Model loaded  ({model.count_parameters()/1e6:.2f}M params)  device={device}")
 
     lm_model = _load_lm(args)
+    
+    print('Generate lookup table')
     build_lookup_table()
 
+    print('Begin predicting')
     hyps, meta = run_inference(
         model, data_root, "test", args.method, lm_model,
         args.beam_width, args.alpha, args.beta, args.batch_size, args.num_workers,
