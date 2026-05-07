@@ -130,7 +130,7 @@ class AudioDataset(Dataset):
             log_mel = spec.squeeze(0).T  # (T, 80)
 
         # Labels are absent in the test split
-        transcription = row.get("transcription", None)
+        transcription = row["transcription"] if "transcription" in row else None
         if transcription is not None:
             label_ids = torch.tensor(encode(normalize_label(transcription)), dtype=torch.long)
         else:
