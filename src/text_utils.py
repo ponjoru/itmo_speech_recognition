@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from functools import lru_cache
 from num2words import num2words
+from tqdm import tqdm
 
 
 @lru_cache(maxsize=None)
@@ -35,7 +36,10 @@ def build_lookup_table() -> dict[str, str]:
     """
     global _LOOKUP
     if _LOOKUP is None:
-        _LOOKUP = {num2words(n, lang="ru"): str(n) for n in range(1000, 1_000_000)}
+        _LOOKUP = {
+            num2words(n, lang="ru"): str(n)
+            for n in tqdm(range(1000, 1_000_000), desc="Building lookup table", unit="num", leave=False)
+        }
     return _LOOKUP
 
 

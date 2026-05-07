@@ -17,6 +17,7 @@ from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from .dataset import AudioDataset, collate_fn
 from .decode import decode_batch
@@ -56,7 +57,7 @@ def run_inference(
     hyps: list[str] = []
 
     with torch.no_grad():
-        for features, feat_lengths, _, _ in loader:
+        for features, feat_lengths, _, _ in tqdm(loader, desc=f"Inference [{split}]", unit="batch"):
             features = features.to(device)
             feat_lengths = feat_lengths.to(device)
             log_probs, out_lengths = model(features, feat_lengths)

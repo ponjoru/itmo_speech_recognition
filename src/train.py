@@ -19,6 +19,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from .dataset import AudioDataset, collate_fn
 from .decode import decode_batch
@@ -55,7 +56,7 @@ def evaluate(
     idx = 0
 
     with torch.no_grad():
-        for features, feat_lengths, labels, label_lengths in loader:
+        for features, feat_lengths, labels, label_lengths in tqdm(loader, desc="Eval", leave=False, unit="batch"):
             features = features.to(device)
             feat_lengths = feat_lengths.to(device)
             log_probs, out_lengths = model(features, feat_lengths)
@@ -157,12 +158,14 @@ def train(args: argparse.Namespace) -> None:
     patience_counter = 0
 
     try:
-        for epoch in range(1, args.epochs + 1):
+        epoch_bar = tqdm(range(1, args.epochs + 1), desc="Epochs", unit="ep")
+        for epoch in epoch_bar:
             model.train()
             t0 = time.time()
             total_loss = 0.0
 
-            for features, feat_lengths, labels, label_lengths in train_loader:
+            batch_bar = tqdm(train_loader, desc=f"Ep {epoch:3d}", leave=False, unit="batch")
+            for features, feat_lengths, labels, label_lengths in batch_bar:
                 features = features.to(device)
                 feat_lengths = feat_lengths.to(device)
                 labels = labels.to(device)
@@ -179,6 +182,8 @@ def train(args: argparse.Namespace) -> None:
                 optimizer.step()
                 scheduler.step()
                 total_loss += loss.item()
+                batch_bar.set_postfix(loss=f"{loss.item():.4f}")
+            batch_bar.close()
 
             avg_loss = total_loss / len(train_loader)
             elapsed = time.time() - t0
@@ -187,11 +192,12 @@ def train(args: argparse.Namespace) -> None:
             if epoch % args.eval_every == 0 or epoch == args.epochs:
                 mean_cer, per_spk = evaluate(model, dev_loader, device, dev_meta)
                 spk_str = "  ".join(f"{k}={v:.3f}" for k, v in sorted(per_spk.items()))
-                print(
+                epoch_bar.write(
                     f"Epoch {epoch:3d}/{args.epochs}  loss={avg_loss:.4f}  "
                     f"dev_CER={mean_cer:.4f}  lr={lr:.2e}  "
                     f"time={elapsed:.0f}s\n  [{spk_str}]"
                 )
+                epoch_bar.set_postfix(CER=f"{mean_cer:.4f}", loss=f"{avg_loss:.4f}")
 
                 row = {"epoch": epoch, "loss": f"{avg_loss:.6f}", "lr": f"{lr:.2e}",
                        "dev_cer": f"{mean_cer:.6f}", "time_s": f"{elapsed:.0f}"}
@@ -203,14 +209,14 @@ def train(args: argparse.Namespace) -> None:
                     best_cer = mean_cer
                     patience_counter = 0
                     torch.save(model.state_dict(), output_dir / "best_model.pt")
-                    print(f"  → Saved best model (CER={best_cer:.4f})")
+                    epoch_bar.write(f"  → Saved best model (CER={best_cer:.4f})")
                 else:
                     patience_counter += 1
                     if patience_counter >= args.patience:
-                        print(f"Early stopping at epoch {epoch}")
+                        epoch_bar.write(f"Early stopping at epoch {epoch}")
                         break
             else:
-                print(f"Epoch {epoch:3d}/{args.epochs}  loss={avg_loss:.4f}  time={elapsed:.0f}s")
+                epoch_bar.set_postfix(loss=f"{avg_loss:.4f}")
 
             if epoch % 10 == 0:
                 torch.save(model.state_dict(), output_dir / f"checkpoint_epoch{epoch:03d}.pt")
