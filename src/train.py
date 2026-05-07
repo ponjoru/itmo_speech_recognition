@@ -93,13 +93,13 @@ def train(args: argparse.Namespace) -> None:
     train_dataset = AudioDataset(
         csv_path=data_root / "train.csv",
         data_root=data_root,
-        augment=True,
+        split="train",
         noise_dir=args.noise_dir,
     )
     dev_dataset = AudioDataset(
         csv_path=data_root / "dev.csv",
         data_root=data_root,
-        augment=False,
+        split="dev",
     )
     with open(data_root / "dev.csv") as f:
         dev_meta = list(csv.DictReader(f))

@@ -2,6 +2,11 @@
 
 Each sample returns (log_mel_features: Tensor[T, 80], label_ids: Tensor[L]).
 The collate_fn packs a batch into padded tensors suitable for CTC training.
+
+Split behaviour:
+    'train' — augmentation on, transcription labels returned
+    'dev'   — augmentation off, transcription labels returned
+    'test'  — augmentation off, empty label tensor returned (no ground truth)
 """
 from __future__ import annotations
 
@@ -63,26 +68,30 @@ def audio_to_logmel(waveform: Tensor, src_sr: int) -> Tensor:
 
 
 class AudioDataset(Dataset):
-    """Dataset for a single CSV split (train or dev).
+    """Dataset for a single CSV split.
 
     Args:
-        csv_path: path to train.csv or dev.csv
-        data_root: directory containing the audio files (parent of train/ or dev/)
-        augment: apply augmentation during __getitem__ (train only)
-        speed_rates: pool of speed factors for perturbation
-        noise_dir: optional directory with noise WAV/MP3 files for mixing
+        csv_path: path to the split CSV (train.csv / dev.csv / test.csv)
+        data_root: directory containing the audio files
+        split: 'train' | 'dev' | 'test' — controls augmentation and label loading
+        speed_rates: pool of speed factors for perturbation (train only)
+        noise_dir: optional directory with noise WAV/MP3 files (train only)
     """
 
     def __init__(
         self,
         csv_path: str | Path,
         data_root: str | Path,
-        augment: bool = False,
+        split: str,
         speed_rates: tuple[float, ...] = (0.9, 1.0, 1.1),
         noise_dir: str | Path | None = None,
     ):
+        if split not in ("train", "dev", "test"):
+            raise ValueError(f"split must be 'train', 'dev', or 'test', got {split!r}")
+
         self.data_root = Path(data_root)
-        self.augment = augment
+        self.split = split
+        self.augment = split == "train"
         self.speed_rates = speed_rates
         self.noise_files: list[Path] = []
 
@@ -108,33 +117,31 @@ class AudioDataset(Dataset):
 
         waveform, sr = torchaudio.load(str(audio_path))
 
-        # --- Waveform-level augmentations ---
+        # --- Waveform-level augmentations (train only) ---
         if self.augment:
             waveform, sr = self._speed_perturb(waveform, sr)
             if self.noise_files and random.random() < 0.5:
                 waveform = self._add_noise(waveform, sr)
             elif random.random() < 0.4:
-                # Gaussian noise fallback when no noise files are provided
                 waveform = self._add_gaussian_noise(waveform)
             if random.random() < 0.35:
                 waveform = self._packet_loss(waveform, sr)
 
         log_mel = audio_to_logmel(waveform, sr)  # (T, 80)
 
-        # --- Feature-level augmentations (SpecAugment) ---
+        # --- Feature-level augmentations (train only) ---
         if self.augment:
             spec = log_mel.T.unsqueeze(0)  # (1, 80, T) for transforms
-            # Always apply: 2 freq masks + 3 time masks
             spec = self.freq_mask(self.freq_mask(spec))
             spec = self.time_mask(self.time_mask(self.time_mask(spec)))
             log_mel = spec.squeeze(0).T  # (T, 80)
 
-        # Labels are absent in the test split
-        transcription = row["transcription"] if "transcription" in row else None
-        if transcription is not None:
-            label_ids = torch.tensor(encode(normalize_label(transcription)), dtype=torch.long)
-        else:
+        if self.split == "test":
             label_ids = torch.zeros(0, dtype=torch.long)
+        else:
+            label_ids = torch.tensor(
+                encode(normalize_label(row["transcription"])), dtype=torch.long
+            )
 
         return log_mel, label_ids
 

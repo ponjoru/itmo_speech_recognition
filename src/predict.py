@@ -46,7 +46,7 @@ def run_inference(
     num_workers: int,
 ) -> tuple[list[str], list[dict]]:
     """Run model inference on a split. Returns (digit_hypotheses, metadata_rows)."""
-    dataset = AudioDataset(data_root / f"{split}.csv", data_root, augment=False)
+    dataset = AudioDataset(data_root / f"{split}.csv", data_root, split=split)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False,
                         num_workers=num_workers, collate_fn=collate_fn)
     with open(data_root / f"{split}.csv") as f:
