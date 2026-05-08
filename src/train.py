@@ -43,8 +43,7 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def main() -> None:
-    args = parse_args()
+def train(args) -> None:
     L.seed_everything(args.seed, workers=True)
 
     dm = ASRDataModule(
@@ -95,4 +94,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    train(args)
