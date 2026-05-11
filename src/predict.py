@@ -45,26 +45,13 @@ def run_inference(
         log_probs, out_lengths = model(padded.to(device), wav_lengths.to(device))
 
         word_indices = decoder.decode_batch(log_probs, out_lengths)
-        results.extend(text_utils.denormalize(idx) for idx in word_indices)
+        for idx in word_indices:
+            text = text_utils.denormalize(idx)
+            results.append(text if text else "1000")
 
     return results
 
-
-def main() -> None:
-    p = argparse.ArgumentParser(description="Run ASR inference and produce a Kaggle submission CSV")
-    p.add_argument("--checkpoint", required=True, help="Path to .ckpt file")
-    p.add_argument("--data_root", required=True, help="Path to dataset root directory")
-    p.add_argument("--test_csv", default=None, help="Override path to test CSV")
-    p.add_argument("--output_csv", default="submission.csv")
-    p.add_argument("--batch_size", type=int, default=16)
-    # Decoding
-    p.add_argument("--greedy", action="store_true", help="Use greedy decoding instead of beam")
-    p.add_argument("--lm_path", default=None, help="Path to KenLM .bin model")
-    p.add_argument("--alpha", type=float, default=0.5, help="LM weight")
-    p.add_argument("--beta", type=float, default=1.0, help="Word insertion bonus")
-    p.add_argument("--beam_width", type=int, default=50)
-    args = p.parse_args()
-
+def predict(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model = ConformerASR.load_from_checkpoint(args.checkpoint, map_location=device)
@@ -91,6 +78,24 @@ def main() -> None:
     submission.to_csv(args.output_csv, index=False)
     print(f"Wrote {len(submission)} predictions to {args.output_csv}")
 
+    
+def main() -> None:
+    p = argparse.ArgumentParser(description="Run ASR inference and produce a Kaggle submission CSV")
+    p.add_argument("--checkpoint", required=True, help="Path to .ckpt file")
+    p.add_argument("--data_root", required=True, help="Path to dataset root directory")
+    p.add_argument("--test_csv", default=None, help="Override path to test CSV")
+    p.add_argument("--output_csv", default="submission.csv")
+    p.add_argument("--batch_size", type=int, default=16)
+    # Decoding
+    p.add_argument("--greedy", action="store_true", help="Use greedy decoding instead of beam")
+    p.add_argument("--lm_path", default=None, help="Path to KenLM .bin model")
+    p.add_argument("--alpha", type=float, default=0.5, help="LM weight")
+    p.add_argument("--beta", type=float, default=1.0, help="Word insertion bonus")
+    p.add_argument("--beam_width", type=int, default=50)
+    args = p.parse_args()
+    
+    predict(args)
+   
 
 if __name__ == "__main__":
     main()
