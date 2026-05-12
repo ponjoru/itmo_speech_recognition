@@ -5,7 +5,6 @@ torchmetrics>=0.11.0
 num2words==0.5.0
 audiomentations==0.39.0
 librosa>=0.10.0
-pyctcdecode>=0.5.0
 kenlm
 pandas>=1.5.0
 tqdm
